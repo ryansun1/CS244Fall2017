@@ -1,16 +1,23 @@
-#include <Wire.h>
+#include "SparkFunLIS3DH.h"
+#include "Wire.h"
+#include "SPI.h"
 #include "MAX30105.h"
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 
+LIS3DH myIMU; // constructed with parameters for SPI and cs pin number
 MAX30105 particleSensor;
+int counter = 0;
 unsigned long startTime;
-// WiFi settings
-const char *ssid = "UCInet Mobile Access";
+
+
+//const char *ssid = "UCInet Mobile Access";
+const char *ssid = "Ryan";
+const char *wifipasswd = "9498856171";
 
 void connectWifi()
 {
-    WiFi.begin(ssid);//, wifipasswd);
+    WiFi.begin(ssid, wifipasswd);
     while (WiFi.status() != WL_CONNECTED)
     {
         delay(500);
@@ -22,108 +29,128 @@ void connectWifi()
     Serial.println(WiFi.localIP());
 }
 
-void postServer(String postMesg, int powerLevel)
+void postServer(String postMesg)
 {
-    String data;
-    data = "data={\"powerLevel\": "+String(powerLevel)+", \"data\": ["+postMesg+"]}";
-
     if (WiFi.status() != WL_CONNECTED){
         Serial.println("WIFI Error");
         return;
     }
-        HTTPClient http;
-        Serial.print("[HTTP] begin...\n");
-        http.begin("http://13.57.112.90/writeCSV.php/"); //HTTP
-        
-        digitalWrite(LED_BUILTIN, LOW);
-        Serial.print("[HTTP] POST...\n");
+    HTTPClient http;
+    //Serial.print("[HTTP] begin...\n");
+    //http.begin("http://13.57.112.90/sensor.php/"); //HTTP
+    http.begin("http://192.168.43.224/~ryansun1/embed/sensor.php/"); //HTTP
 
-        http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-        Serial.println(data);        
-        int httpCode = http.POST(data); 
+    
+    
+    //digitalWrite(LED_BUILTIN, LOW);
+    //Serial.print("[HTTP] POST...\n");
 
-        if(httpCode > 0) {
-            Serial.printf("[HTTP] POST... code: %d\n", httpCode);
-            if(httpCode == HTTP_CODE_OK) {
-                String payload = http.getString();
-                Serial.println(payload);
-            }
-        } else {
-            Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    //Serial.println(postMesg);        
+    int httpCode = http.POST(postMesg); 
+
+    if(httpCode > 0) {
+        Serial.printf("[HTTP] POST... code: %d\n", httpCode);
+        if(httpCode == HTTP_CODE_OK) {
+            String payload = http.getString();
+            Serial.println(payload);
         }
-        http.end();
-        digitalWrite(LED_BUILTIN, HIGH);
+    } else {
+        Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
+    http.end();
+    //digitalWrite(LED_BUILTIN, HIGH);
 }
 
+void read_sensor(float * x, float * y, float * z, int * IR, int * RED) {
+    *x = myIMU.readFloatAccelX();
+    *y = myIMU.readFloatAccelY();
+    *z = myIMU.readFloatAccelZ();
+    *IR = particleSensor.getIR();
+    *RED = particleSensor.getRed();
+}
 
-void startSensor(int powerLevel)
+void print_sensor(float & x, float & y, float & z, int & IR, int & RED) {
+    Serial.print("\nAccelerometer:\n");
+    Serial.print(" X = ");
+    Serial.println(x, 4);
+    Serial.print(" Y = ");
+    Serial.println(y, 4);
+    Serial.print(" Z = ");
+    Serial.println(z, 4);
+    Serial.print("\nPPG:\n");
+    Serial.print(" IR = ");
+    Serial.println(IR, 4);
+    Serial.print(" RED = ");
+    Serial.println(RED, 4);
+}
+
+void startPPGSensor()
 {
     // Initialize sensor
     if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) //Use default I2C port, 400kHz speed
     {
-      Serial.println("MAX30105 was not found. Please check wiring/power. ");
-      while (1);
+        Serial.println("MAX30105 was not found. Please check wiring/power. ");
+        while (1);
     }
+    
     particleSensor.setup(); //Configure sensor. Use 6.4mA for LED drive
-
-    particleSensor.setPulseAmplitudeRed(powerLevel);
-    particleSensor.setPulseAmplitudeIR(powerLevel);
-    particleSensor.setPulseAmplitudeGreen(powerLevel);
-    particleSensor.setPulseAmplitudeProximity(powerLevel);
     particleSensor.setSampleRate(50);  //set freq = 50
+    particleSensor.setFIFOAverage(0x10);
 }
 
-void captureData()
-{
-  int powerLevel[4] = {0x02,0x1F,0x7F,0xFF};   //0.4mA, 6.4mA, 25.4mA,  50.0mA
-  for(int i=0;i<4;i++){
-    String data = "";
-    int count = 0;
-    
-    //delay(1000);
-
-    startTime = millis();
-    startSensor(powerLevel[i]); 
-    while (1){
-      data += "[";
-      data += particleSensor.getIR();
-      data += ",";
-      data += particleSensor.getRed();
-      data += "]";
-
-      Serial.print(" R[");
-      Serial.print(particleSensor.getRed());
-      Serial.print("] IR[");
-      Serial.print(particleSensor.getIR());
-      
-      Serial.print("  powerLevel = ");
-      Serial.print(i);
-      Serial.println();
-
-      if((millis() - startTime) > 120000)   //set 2 minutes
-        break;
-    
-      count++;
-      if (count == 20){         //post to server after every twenty data captured
-        postServer(data,i+1);    //i is for powerlevel, for seperating different cvs
-        count = 0;
-        data = "";
-      }
-      else
-        data += ",";
+String to_JSON_data(String data[], int len) {
+    String s;
+    s = "data={\"sensor\":[";
+    for(int i = 0; i < len-1; i++){
+        s += data[i] + ",";
     }
-    postServer(data,i+1);
-  }
+    s += data[len-1] + "]}";
+    return s;
 }
 
-void setup()
-{
-  Serial.begin(115200);
-  Serial.println("Initializing...");
-  connectWifi();
-  captureData();
+String to_JSON_array(float & x, float & y, float & z, int & IR, int & RED){
+    String s = "[" + String(x,'\005') + "," +String(y, '\005') + "," + String(z, '\005') + "," + String(IR) + "," + String(RED) + "]";   //somehow, it won't include the digit under 0.01 when converting float to string
+    //Serial.println(s);
+    return s;
 }
+
+void setup() {
+    // put your setup code here, to run once:
+    Serial.begin(115200);
+    delay(1000); //relax...
+    Serial.println("Processor came out of reset.\n");
+    digitalWrite(LED_BUILTIN, LOW);
+    //Call .begin() to configure the IMU
+
+    connectWifi();
+    myIMU.begin();
+    startPPGSensor();
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(1000);
+    startTime = millis();
+}
+
 
 void loop()
 {
+     //Get all parameters
+    int CHUNK_SIZE = 50; //50 samples / sec * 60 sec = 3000 samples = 3kb
+    //float x[CHUNK_SIZE],y[CHUNK_SIZE],z[CHUNK_SIZE];
+    float x, y, z;
+    int IR, RED;
+    String data[CHUNK_SIZE];
+    for(int i = 0; i < CHUNK_SIZE; i++){
+        delay(10);
+        read_sensor(&x,&y,&z,&IR,&RED);
+        //print_sensor(x,y,z,IR,RED);
+        data[i] = to_JSON_array(x, y, z, IR, RED);
+        Serial.println(counter);
+        counter++;
+    }
+    String s = to_JSON_data(data, CHUNK_SIZE);
+    postServer(s);
+    //delay(500);
+    if((millis() - startTime) > 600000)   //set 10 minutes
+        delay(500000000);
 }
