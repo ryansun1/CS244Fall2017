@@ -18,19 +18,11 @@ def split_data(data, seed = 0):
 
     return training_data, validation_data
 
-def compute_window(X, window_size = 10, func = np.mean):
+def compute_window(X, window_size = 100, func = np.mean):
     window = np.zeros(X.shape)
     for i in range(X.shape[0]):
         window[i] = func(X[max(0, i-window_size):min(X.shape[0]-1, i+window_size)], axis = 0)
-    return np.concatenate((X, window), axis = 1)
-
-def calculate_feature_mean(csv, window_size):
-    features = np.empty(shape = (0, 7))
-    for i in ACTIVITIES:
-        activity_i = extract_activity(csv, i).T
-        features_i = np.concatenate((compute_window(activity_i[:,:-1]), activity_i[:,-1, np.newaxis]), axis = 1)
-        features = np.concatenate((features, features_i), axis = 0)
-    return features    
+    return np.concatenate((X, window), axis = 1) 
 
 def evaluate_learner(clf, training_data, validation_data):
     training_MSE = np.mean(
@@ -44,34 +36,34 @@ def evaluate_learner(clf, training_data, validation_data):
     print("MSE", training_MSE, validation_MSE)
     print("MAE", training_MAE, validation_MAE)
 
-if __name__ == '__main__':
-    laying_data = np.genfromtxt("Ryan_laying.csv",
-                         delimiter=',', skip_header=0, usecols=(0, 1, 2))
-    sitting_data = np.genfromtxt("Ryan_sitting.csv",
-                         delimiter=',', skip_header=0, usecols=(0, 1, 2))
+def load_data(file_list):
+    activity_data = []
+    for activity, file in enumerate(file_list, 1):
+        data = np.genfromtxt(file, delimiter=',', skip_header=0, usecols=(0, 1, 2))
+        data = np.concatenate((compute_window(data), 
+            np.full((data.shape[0], 1), activity, dtype=data.dtype)), 
+            axis = 1)
+        activity_data.append(data)
+    return activity_data
 
-    #compute window for the training data
-    laying_data = np.concatenate((compute_window(laying_data), 
-                                    np.full((laying_data.shape[0], 1), 
-                                1, dtype=laying_data.dtype)), axis = 1)
-    sitting_data = np.concatenate((compute_window(sitting_data),
-                                     np.full((sitting_data.shape[0], 1), 
-                                2, dtype=laying_data.dtype)), axis = 1)
-    features = np.concatenate((laying_data, sitting_data), axis = 0)
+def calculate_error_rate(clf, file_list, data_list):
+    for file, test_data in zip(file_list, data_list):
+        print(file, "error = ", np.sum(np.where(clf.predict(test_data[:,:-1]) != test_data[:,-1], 1, 0)))
+
+def main():
+    data_file_names = ["Ryan_laying.csv", "Ryan_sitting.csv", "Ryan_walking.csv", 
+                    "ryan_jogging.csv", "ryan_running.csv"]
+    #1. Sleeping (Lying down), 2. Sitting, 3. Walking, 4. Jogging, 5. Running
+    activity_data_list = load_data(data_file_names)
+    features = np.concatenate(activity_data_list, axis = 0)
     training_data, validation_data = split_data(features, seed=0)
     #train on partial data
-    training_data = training_data[::2]
+    training_data = training_data[::10]
 
+    #pdb.set_trace()
     clf = svm.SVC()
     clf.fit(training_data[:,:-1], training_data[:,-1])
     evaluate_learner(clf, training_data, validation_data)
-
-    #test data is sitting 
-    sensor_reading = np.genfromtxt("sensor.csv",
-                         delimiter=',', skip_header=0, usecols=(0, 1, 2))
-    test_data = compute_window(sensor_reading)
-
-    Yte = np.full(test_data.shape[0], 2, test_data.dtype)
-    Yte_hat = clf.predict(test_data)
-    test_MSE = np.mean((Yte_hat - Yte) ** 2)
-    print("test MSE", test_MSE)
+    calculate_error_rate(clf, data_file_names, activity_data_list)
+if __name__ == '__main__':
+    main()

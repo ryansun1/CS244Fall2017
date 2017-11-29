@@ -1,6 +1,5 @@
 #include "SparkFunLIS3DH.h"
-#include "Wire.h"
-#include "SPI.h"
+#include "Secrets.h"
 #include "MAX30105.h"
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
@@ -9,15 +8,12 @@ LIS3DH myIMU; // constructed with parameters for SPI and cs pin number
 MAX30105 particleSensor;
 int counter = 0;
 unsigned long startTime;
-
-
-//const char *ssid = "UCInet Mobile Access";
-const char *ssid = "Ryan";
-const char *wifipasswd = "9498856171";
+const int CHUNK_SIZE = 50; //50 samples / sec * 60 sec = 3000 samples = 3kb
+String data[CHUNK_SIZE];
 
 void connectWifi()
 {
-    WiFi.begin(ssid, wifipasswd);
+    WiFi.begin(ssid);//, wifipasswd);
     while (WiFi.status() != WL_CONNECTED)
     {
         delay(500);
@@ -37,12 +33,12 @@ void postServer(String postMesg)
     }
     HTTPClient http;
     //Serial.print("[HTTP] begin...\n");
-    //http.begin("http://13.57.112.90/sensor.php/"); //HTTP
-    http.begin("http://192.168.43.224/~ryansun1/embed/sensor.php/"); //HTTP
+    http.begin("http://13.57.112.90/sensor.php/"); //HTTP
+    //http.begin("http://192.168.43.224/~ryansun1/embed/sensor.php/"); //HTTP
 
     
     
-    //digitalWrite(LED_BUILTIN, LOW);
+    digitalWrite(LED_BUILTIN, LOW);
     //Serial.print("[HTTP] POST...\n");
 
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -59,7 +55,7 @@ void postServer(String postMesg)
         Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
     }
     http.end();
-    //digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(LED_BUILTIN, HIGH);
 }
 
 void read_sensor(float * x, float * y, float * z, int * IR, int * RED) {
@@ -118,6 +114,7 @@ String to_JSON_array(float & x, float & y, float & z, int & IR, int & RED){
 void setup() {
     // put your setup code here, to run once:
     Serial.begin(115200);
+    pinMode(LED_BUILTIN, OUTPUT);
     delay(1000); //relax...
     Serial.println("Processor came out of reset.\n");
     digitalWrite(LED_BUILTIN, LOW);
@@ -135,11 +132,8 @@ void setup() {
 void loop()
 {
      //Get all parameters
-    int CHUNK_SIZE = 50; //50 samples / sec * 60 sec = 3000 samples = 3kb
-    //float x[CHUNK_SIZE],y[CHUNK_SIZE],z[CHUNK_SIZE];
     float x, y, z;
     int IR, RED;
-    String data[CHUNK_SIZE];
     for(int i = 0; i < CHUNK_SIZE; i++){
         delay(10);
         read_sensor(&x,&y,&z,&IR,&RED);
@@ -151,6 +145,11 @@ void loop()
     String s = to_JSON_data(data, CHUNK_SIZE);
     postServer(s);
     //delay(500);
-    if((millis() - startTime) > 600000)   //set 10 minutes
+    if((millis() - startTime) > 10*60*1000)   //set 10 minutes
+    {
+        digitalWrite(LED_BUILTIN, LOW);
+        //uint32_t free = system_get_free_heap_size();      //see the remaining size of heap
         delay(500000000);
+    }
+        
 }

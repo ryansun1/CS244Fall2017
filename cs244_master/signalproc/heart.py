@@ -29,28 +29,62 @@ def respiration(time, filteredData) -> (np.array, np.array):
     peakTime = time[sig.argrelmax(filteredData, order=25)]
     return np.column_stack((peakTime[:-1], (60 / (peakTime[1:] - peakTime[:-1]))))
 
-def spo2(time, IR_filt, RED_filt, order):
+def set_orders(IR_filt, RED_filt, low_bound, high_bound):
+    for i in range(low_bound, high_bound):
+        IR_size = sig.argrelmax(IR_filt, order=i)[0].size
+        for j in range(low_bound, high_bound):
+            RED_size = sig.argrelmax(RED_filt, order=j)[0].size
+            if IR_size == RED_size:
+                return (i, j)
+            elif RED_size < IR_size:
+                break
+    return high_bound, high_bound
+    '''
+    IR_points = np.array([sig.argrelmax(IR_filt, order=i)[0].size for i in range(low_bound, high_bound)])
+    RED_points = np.array([sig.argrelmax(RED_filt, order=i)[0].size for i in range(low_bound, high_bound)])
+    print(IR_points)
+    print(RED_points)
+    #pdb.set_trace()
+    for count, points in enumerate(IR_points):
+        matches = np.where(RED_points == points)[0]
+        if matches.size > 0:
+            #pdb.set_trace()
+            print(count, matches[0])
+            print(IR_points[count], RED_points[matches[0]])
+            return (count, matches[0])
+    return high_bound, high_bound
+    '''
 
-    peakIR = IR_filt[sig.argrelmax(IR_filt, order=order)]
-    peakTime = time[sig.argrelmax(IR_filt, order=order)]
-    minPeakTime = time[sig.argrelmin(IR_filt, order=order)]
-    interpldPoint = interp1d(minPeakTime, IR_filt[sig.argrelmin(IR_filt, order=order)])
+def spo2(time, IR_filt, RED_filt, low_bound, high_bound):
+    IR_order, RED_order = set_orders(IR_filt, RED_filt, low_bound, high_bound)
+    IR_peak_index = sig.argrelmax(IR_filt, order=IR_order)
+    IR_min_index = sig.argrelmin(IR_filt, order=IR_order)
 
-    DCIR = interpldPoint(peakTime[1:])
-    ACIR = peakIR[1:] - DCIR
+    peakIR = IR_filt[IR_peak_index]
+    peakTime = time[IR_peak_index]
+    minPeakTime = time[IR_min_index]
+    interpldPoint = interp1d(minPeakTime, IR_filt[IR_min_index])
 
-    peakRED = RED_filt[sig.argrelmax(RED_filt, order=order)]
-    peakTimeRED = time[sig.argrelmax(RED_filt, order=order)]
-    minPeakTimeRED = time[sig.argrelmin(RED_filt, order=order)]
-    interpldPoint = interp1d(minPeakTimeRED, RED_filt[sig.argrelmin(RED_filt, order=order)])
+    #pdb.set_trace()
+    
+    DCIR = interpldPoint(np.where(peakTime < minPeakTime.max(), np.where(minPeakTime.min() < peakTime, peakTime, minPeakTime.min()), minPeakTime.max()))
+    ACIR = peakIR - DCIR
 
-    DCRED = interpldPoint(peakTimeRED[1:])
-    ACRED = peakRED[1:] - DCRED
+    RED_peak_index = sig.argrelmax(RED_filt, order=RED_order)
+    RED_min_index = sig.argrelmin(RED_filt, order=RED_order)
+    peakRED = RED_filt[RED_peak_index]
+    peakTimeRED = time[RED_peak_index]
+    minPeakTimeRED = time[RED_min_index]
+    interpldPoint = interp1d(minPeakTimeRED, RED_filt[RED_min_index])
 
+    DCRED = interpldPoint(np.where(peakTimeRED < minPeakTimeRED.max(), np.where(minPeakTimeRED.min() < peakTimeRED, peakTimeRED, minPeakTimeRED.min()), minPeakTimeRED.max()))
+    ACRED = peakRED - DCRED
+
+    #pdb.set_trace()
     R = (ACRED * DCIR) / (ACIR * DCRED)
     spo2 = (R*R*(-45.06))+(R*30.354) + 94.845
     
-    return np.column_stack((peakTime[:-1],spo2))
+    return np.column_stack((peakTime,spo2))
 
 def expand_data(time, calculated_rate):
     out = np.empty((time.shape[0], calculated_rate.shape[1]))
@@ -69,7 +103,7 @@ def write_file(data, fname = 'foo.txt'):
             f.write(', '.join(map(str, row)))
             f.write('\n')
 
-def plot_rates(calculated_rates):
+def plot_rates(calculated_rates, activity):
     time = calculated_rates[:,0]
     HR = calculated_rates[:,1]
     RS = calculated_rates[:,2]
@@ -80,6 +114,7 @@ def plot_rates(calculated_rates):
     f3, = plt.plot(time, SP, label='spo2')
     plt.legend((f1, f2, f3),
                 ('heart', 'respiration', 'spO2'))
+    plt.title(activity)
     plt.show(False)
     
 def plot_signal(time, IR, RED):
@@ -123,44 +158,48 @@ def plot_FFT(time, signal, lowcut, highcut):
     plt.show(block=False)
 
 if __name__ == '__main__':
-    data = np.genfromtxt("sensor.csv",
-                         delimiter=',', skip_header=1, usecols=(0, 1, 2, 3, 4), invalid_raise=True)
-    np.set_printoptions(precision=3, suppress=True)
-    SECONDS_OF_DATA=600
-    time = np.linspace(0, SECONDS_OF_DATA, data.shape[0]) 
-    IR = data[:, -2]
-    RED = data[:, -1]
+    data_file_names = ["Ryan_laying.csv", "Ryan_sitting.csv", "Ryan_walking.csv", 
+                    "ryan_jogging.csv", "ryan_running.csv"]
+    for fname in data_file_names:
+        data = np.genfromtxt(fname,
+                             delimiter=',', skip_header=1, usecols=(0, 1, 2, 3, 4), invalid_raise=True)
+        np.set_printoptions(precision=3, suppress=True)
+        SECONDS_OF_DATA=600
+        time = np.linspace(0, SECONDS_OF_DATA, data.shape[0]) 
+        IR = data[:, -2]
+        RED = data[:, -1]
 
-    SmpRate= len(data) / SECONDS_OF_DATA
+        SmpRate= len(data) / SECONDS_OF_DATA
 
-    HEART_LOW = 0.9
-    HEART_HIGH = 3
+        HEART_LOW = 0.9
+        HEART_HIGH = 3
 
-    #plot_FFT(time, RED, HEART_LOW, HEART_HIGH)
-    IR_filt = BandPass(IR, SmpRate, HEART_LOW, HEART_HIGH)
-    RED_filt = BandPass(RED, SmpRate, HEART_LOW, HEART_HIGH)
-    calculated_HR = heart_rate(time, RED_filt)
+        #plot_FFT(time, RED, HEART_LOW, HEART_HIGH)
+        IR_filt = BandPass(IR, SmpRate, HEART_LOW, HEART_HIGH)
+        RED_filt = BandPass(RED, SmpRate, HEART_LOW, HEART_HIGH)
+        calculated_HR = heart_rate(time, RED_filt)
 
-    RESP_LOW = 0.16
-    RESP_HIGH = 0.33
+        RESP_LOW = 0.16
+        RESP_HIGH = 0.33
 
-    #plot_FFT(time, RED, RESP_LOW, RESP_HIGH)
-    IR_filt = BandPass(IR, SmpRate, RESP_LOW, RESP_HIGH)
-    RED_filt = BandPass(RED, SmpRate, RESP_LOW, RESP_HIGH)
-    calculated_RS = respiration(time,RED_filt)
+        #plot_FFT(time, RED, RESP_LOW, RESP_HIGH)
+        IR_filt = BandPass(IR, SmpRate, RESP_LOW, RESP_HIGH)
+        RED_filt = BandPass(RED, SmpRate, RESP_LOW, RESP_HIGH)
+        calculated_RS = respiration(time,RED_filt)
 
-    SPO2_LOW = 1
-    SPO2_HIGH = 2
-    IR_filt = BandPass(IR, SmpRate, SPO2_LOW, SPO2_HIGH)
-    RED_filt = BandPass(RED, SmpRate, SPO2_LOW, SPO2_HIGH)
-    #plot_FFT(time, IR, SPO2_LOW, SPO2_HIGH)
-    #plot_FFT(time, RED, SPO2_LOW, SPO2_HIGH)
-    calculated_SP = spo2(time, IR, RED, 10)
+        SPO2_LOW = 1
+        SPO2_HIGH = 2
+        IR_filt = BandPass(IR, SmpRate, SPO2_LOW, SPO2_HIGH)
+        RED_filt = BandPass(RED, SmpRate, SPO2_LOW, SPO2_HIGH)
+        #plot_FFT(time, IR, SPO2_LOW, SPO2_HIGH)
+        #plot_FFT(time, RED, SPO2_LOW, SPO2_HIGH)
+        calculated_SP = spo2(time, IR, RED, 3, 50)
 
-    calculated_rates = np.concatenate((time[:,np.newaxis], 
-                        expand_data(time, calculated_HR),
-                        expand_data(time, calculated_RS),
-                        expand_data(time, calculated_SP)),
-                        axis = 1)
-    #write_file(calculated_rates, 'hw6_data.csv')
-    plot_rates(calculated_rates)
+        calculated_rates = np.concatenate((time[:,np.newaxis], 
+                            expand_data(time, calculated_HR),
+                            expand_data(time, calculated_RS),
+                            expand_data(time, calculated_SP)),
+                            axis = 1)
+        write_file(np.concatenate((data, calculated_rates), axis = 1), "team16_assignment7_activity_" + fname)
+        plot_rates(calculated_rates, "team16_assignment7_activity_" + fname)
+
